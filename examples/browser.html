@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AIOS Kernel — Browser Example</title>
+  <style>
+    body { font-family: monospace; padding: 2em; background: #1a1a2e; color: #e0e0e0; }
+    h1   { color: #00d4ff; }
+    pre  { background: #0f3460; padding: 1em; border-radius: 6px; overflow: auto; }
+    button { margin: 0.5em 0.5em 0 0; padding: 0.5em 1em; cursor: pointer;
+             background: #00d4ff; border: none; border-radius: 4px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>AIOS Kernel — Browser Example</h1>
+  <button id="btn-boot">Boot Kernel</button>
+  <button id="btn-module">Load Module</button>
+  <button id="btn-shutdown">Shutdown</button>
+  <pre id="log"></pre>
+
+  <!-- Load the kernel -->
+  <script src="../kernel.js"></script>
+  <script>
+    const { createKernel } = AIOS;
+    const logEl = document.getElementById('log');
+
+    function log(msg) {
+      logEl.textContent += msg + '\n';
+    }
+
+    const kernel = createKernel();
+
+    kernel.on('kernel:boot:start',      (d) => log(`[event] kernel:boot:start       id=${d.kernelId}`));
+    kernel.on('kernel:boot:ready',      (d) => log(`[event] kernel:boot:ready       services=[${d.services.join(', ')}]`));
+    kernel.on('kernel:module:loaded',   (d) => log(`[event] kernel:module:loaded    name=${d.name}`));
+    kernel.on('kernel:module:unloaded', (d) => log(`[event] kernel:module:unloaded  name=${d.name}`));
+    kernel.on('kernel:shutdown:complete',(d) => log(`[event] kernel:shutdown:complete id=${d.kernelId}`));
+
+    document.getElementById('btn-boot').onclick = async () => {
+      try {
+        await kernel.boot();
+        log(`Kernel booted — env=${kernel.env}  uptime=${kernel.uptime()}ms`);
+      } catch (err) {
+        log(`Error: ${err.message}`);
+      }
+    };
+
+    document.getElementById('btn-module').onclick = () => {
+      try {
+        kernel.loadModule('demo', {
+          name: 'demo',
+          version: '1.0.0',
+          start() { log('Demo module started'); },
+          stop()  { log('Demo module stopped'); }
+        });
+      } catch (err) {
+        log(`Error: ${err.message}`);
+      }
+    };
+
+    document.getElementById('btn-shutdown').onclick = async () => {
+      try {
+        await kernel.shutdown();
+        log('Kernel shut down');
+      } catch (err) {
+        log(`Error: ${err.message}`);
+      }
+    };
+  </script>
+</body>
+</html>

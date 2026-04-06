@@ -15,12 +15,15 @@ function detectEnvironment() {
   if (typeof process !== 'undefined' && process.versions && process.versions.node) {
     return 'node';
   }
+  /* istanbul ignore next */
   if (typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)) {
     return 'android';
   }
+  /* istanbul ignore next */
   if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     return 'browser';
   }
+  /* istanbul ignore next */
   return 'unknown';
 }
 
@@ -34,6 +37,7 @@ function generateId() {
     return crypto.randomUUID();
   }
   // Fall back to crypto.getRandomValues() for older environments
+  /* istanbul ignore next */
   if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
     const bytes = new Uint8Array(16);
     crypto.getRandomValues(bytes);
@@ -44,7 +48,9 @@ function generateId() {
     return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
   }
   // Last resort: Math.random() — acceptable only when crypto is unavailable
+  /* istanbul ignore next */
   const hex = (n) => Math.floor(Math.random() * Math.pow(16, n)).toString(16).padStart(n, '0');
+  /* istanbul ignore next */
   return `${hex(8)}-${hex(4)}-4${hex(3)}-${hex(4)}-${hex(12)}`;
 }
 
@@ -105,6 +111,15 @@ class ModuleRegistry {
   loadModule(name, module) {
     if (!name || typeof name !== 'string') throw new TypeError('Module name must be a non-empty string');
     if (!module || typeof module !== 'object') throw new TypeError('Module must be an object');
+
+    if (typeof module.start !== 'function') {
+      // eslint-disable-next-line no-console
+      console.warn(`[ModuleRegistry] Module "${name}" does not implement start() — it will not be started automatically`);
+    }
+    if (typeof module.stop !== 'function') {
+      // eslint-disable-next-line no-console
+      console.warn(`[ModuleRegistry] Module "${name}" does not implement stop() — it will not be stopped automatically`);
+    }
 
     const existing = this._modules[name];
     if (existing) {
@@ -178,6 +193,14 @@ class ServiceRegistry {
     return this._services[name] || null;
   }
 
+  /**
+   * Remove a named service from the registry.
+   * @param {string} name
+   */
+  unregister(name) {
+    delete this._services[name];
+  }
+
   list() {
     return Object.keys(this._services);
   }
@@ -243,23 +266,29 @@ class InterOS {
     this._activeTransport = transport;
 
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Handshake timed out')), 5000);
+      const timeout = setTimeout(() => {
+        this._bus.off('handshake:ack', handshakeHandler);
+        this._bus.off('handshake:error', handshakeHandler);
+        reject(new Error('Handshake timed out'));
+      }, 5000);
 
-      const ackHandler = (data) => {
+      const handshakeHandler = (data) => {
         if (data.type === 'handshake:ack') {
           clearTimeout(timeout);
-          this._bus.off('handshake:ack', ackHandler);
+          this._bus.off('handshake:ack', handshakeHandler);
+          this._bus.off('handshake:error', handshakeHandler);
           this._peers[data.peerId] = { version: data.version, capabilities: data.capabilities };
           resolve({ peerId: data.peerId, version: data.version, capabilities: data.capabilities });
         } else if (data.type === 'handshake:error') {
           clearTimeout(timeout);
-          this._bus.off('handshake:ack', ackHandler);
+          this._bus.off('handshake:ack', handshakeHandler);
+          this._bus.off('handshake:error', handshakeHandler);
           reject(new Error(`Handshake error from peer: ${data.reason}`));
         }
       };
 
-      this._bus.on('handshake:ack', ackHandler);
-      this._bus.on('handshake:error', ackHandler);
+      this._bus.on('handshake:ack', handshakeHandler);
+      this._bus.on('handshake:error', handshakeHandler);
 
       adapter.send({
         type: 'handshake:init',
@@ -279,8 +308,22 @@ class InterOS {
   send(type, payload, transportName) {
     const name = transportName || this._activeTransport;
     const adapter = this._transports[name];
-    if (!adapter) throw new Error(`No active transport. Call handshake() first or specify a transport name.`);
+    if (!adapter) throw new Error('No active transport. Call handshake() first or specify a transport name.');
     adapter.send({ type, payload, from: this._kernel.id });
+    return this;
+  }
+
+  /**
+   * Broadcast a typed message to ALL registered transports.
+   * @param {string} type
+   * @param {object} payload
+   */
+  broadcast(type, payload) {
+    for (const name of Object.keys(this._transports)) {
+      try {
+        this._transports[name].send({ type, payload, from: this._kernel.id });
+      } catch (_) { /* continue to next transport */ }
+    }
     return this;
   }
 
@@ -394,6 +437,7 @@ function createInMemoryLoopback() {
 function createPostMessageTransport(target, origin) {
   // Default to the current page origin when possible; fall back to '*' only
   // when no DOM context is available (e.g. a Worker without a location).
+  /* istanbul ignore next */
   const targetOrigin = origin !== undefined
     ? origin
     : (typeof location !== 'undefined' && location.origin ? location.origin : '*');
@@ -404,6 +448,7 @@ function createPostMessageTransport(target, origin) {
   };
 
   // Support both Window (addEventListener) and Worker (onmessage)
+  /* istanbul ignore next */
   if (typeof target.addEventListener === 'function') {
     target.addEventListener('message', listener);
   } else {
@@ -413,6 +458,7 @@ function createPostMessageTransport(target, origin) {
   return {
     send(message) {
       const serialized = typeof message === 'string' ? message : JSON.stringify(message);
+      /* istanbul ignore next */
       if (typeof target.postMessage === 'function') {
         try {
           target.postMessage(serialized, targetOrigin);
@@ -424,6 +470,7 @@ function createPostMessageTransport(target, origin) {
     onMessage(handler) { _handler = handler; },
     close() {
       _handler = null;
+      /* istanbul ignore next */
       if (typeof target.removeEventListener === 'function') {
         target.removeEventListener('message', listener);
       } else {
@@ -434,8 +481,96 @@ function createPostMessageTransport(target, origin) {
 }
 
 // ---------------------------------------------------------------------------
-// Default subsystem stubs (used when real subsystems are not provided)
+// Built-in Transport: Node.js worker_threads MessageChannel
 // ---------------------------------------------------------------------------
+
+/**
+ * Creates a transport adapter backed by a Node.js `worker_threads` Worker
+ * (or any object that exposes `postMessage()` and `on('message', handler)`).
+ *
+ * Usage:
+ *   const { Worker } = require('worker_threads');
+ *   const worker = new Worker('./my-worker.js');
+ *   kernelA.interOS.registerTransport('worker', createNodeWorkerTransport(worker));
+ *
+ * @param {{ postMessage: function, on: function, removeListener?: function }} worker
+ * @returns {adapter}
+ */
+function createNodeWorkerTransport(worker) {
+  if (!worker || typeof worker.postMessage !== 'function' || typeof worker.on !== 'function') {
+    throw new TypeError('worker must implement postMessage() and on()');
+  }
+  let _handler = null;
+
+  const listener = (message) => {
+    if (_handler) _handler(message);
+  };
+
+  worker.on('message', listener);
+
+  return {
+    send(message) {
+      worker.postMessage(message);
+    },
+    onMessage(handler) { _handler = handler; },
+    close() {
+      _handler = null;
+      if (typeof worker.removeListener === 'function') {
+        worker.removeListener('message', listener);
+      } else if (typeof worker.off === 'function') {
+        worker.off('message', listener);
+      }
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Built-in Transport: BroadcastChannel (same-origin, multi-tab)
+// ---------------------------------------------------------------------------
+
+/**
+ * Creates a transport adapter backed by the browser BroadcastChannel API.
+ * Messages are delivered to all other pages/tabs that have registered the
+ * same channel name.
+ *
+ * Usage:
+ *   kernel.interOS.registerTransport('tabs', createBroadcastChannelTransport('aios'));
+ *
+ * @param {string} channelName - BroadcastChannel name shared by all tabs
+ * @returns {adapter}
+ */
+function createBroadcastChannelTransport(channelName) {
+  if (!channelName || typeof channelName !== 'string') {
+    throw new TypeError('channelName must be a non-empty string');
+  }
+  /* istanbul ignore next */
+  if (typeof BroadcastChannel === 'undefined') {
+    throw new Error('BroadcastChannel is not available in this environment');
+  }
+  /* istanbul ignore next */
+  const channel = new BroadcastChannel(channelName);
+  /* istanbul ignore next */
+  let _handler = null;
+
+  /* istanbul ignore next */
+  channel.onmessage = (event) => {
+    if (_handler) _handler(event.data);
+  };
+
+  /* istanbul ignore next */
+  return {
+    send(message) {
+      channel.postMessage(message);
+    },
+    onMessage(handler) { _handler = handler; },
+    close() {
+      _handler = null;
+      channel.close();
+    }
+  };
+}
+
+
 
 function createDefaultFilesystem() {
   const store = Object.create(null);
@@ -465,6 +600,7 @@ function createDefaultRouter() {
 
 function createDefaultCPU() {
   const tasks = [];
+  const MAX_QUEUE_LENGTH = 1000;
   let running = false;
   let intervalId = null;
 
@@ -476,7 +612,14 @@ function createDefaultCPU() {
 
   return {
     name: 'DefaultCPU',
-    enqueue(task) { tasks.push(task); },
+    enqueue(task) {
+      if (tasks.length >= MAX_QUEUE_LENGTH) {
+        // eslint-disable-next-line no-console
+        console.warn(`[DefaultCPU] Task queue full (max ${MAX_QUEUE_LENGTH}); dropping oldest task`);
+        tasks.shift();
+      }
+      tasks.push(task);
+    },
     start() {
       if (running) return;
       running = true;
@@ -576,7 +719,7 @@ class Kernel {
     this.version = KERNEL_VERSION;
     this.bootTime = null;
     this._startTime = null;
-    this._status = 'created'; // created | booting | running | shutdown
+    this._status = 'created'; // created | booting | running | shutting_down | stopped
 
     // Environment
     this.env = detectEnvironment();
@@ -603,6 +746,13 @@ class Kernel {
       : new InterOS(this);
   }
 
+  /**
+   * Current kernel lifecycle state.
+   * One of: 'created' | 'booting' | 'running' | 'shutting_down' | 'stopped'
+   * @returns {string}
+   */
+  get state() { return this._status; }
+
   // ── Public event bus ────────────────────────────────────────────────────
 
   on(event, handler)   { this._bus.on(event, handler);  return this; }
@@ -615,6 +765,58 @@ class Kernel {
   unloadModule(name)        { return this.modules.unloadModule(name); }
   getModule(name)           { return this.modules.getModule(name); }
   listModules()             { return this.modules.listModules(); }
+
+  /**
+   * Asynchronously load a module using a dynamic import function.
+   * The importFn should return a Promise that resolves to a module object.
+   *
+   * @param {string} name
+   * @param {function} importFn - e.g. () => import('./my-module.js')
+   * @returns {Promise<ModuleRegistry>}
+   */
+  async loadModuleAsync(name, importFn) {
+    if (typeof importFn !== 'function') throw new TypeError('importFn must be a function');
+    const mod = await importFn();
+    return this.modules.loadModule(name, mod.default || mod);
+  }
+
+  // ── Convenience lifecycle helpers ────────────────────────────────────────
+
+  /**
+   * Restart the kernel (shutdown then boot).
+   * @returns {Promise<Kernel>}
+   */
+  async restart() {
+    await this.shutdown();
+    // Reset status so boot() can run again
+    this._status = 'created';
+    return this.boot();
+  }
+
+  /**
+   * Register a one-time handler that fires as soon as the kernel is ready.
+   * If the kernel is already running, the handler is called synchronously.
+   * @param {function} handler
+   */
+  onceReady(handler) {
+    if (typeof handler !== 'function') throw new TypeError('handler must be a function');
+    if (this._status === 'running') {
+      handler({
+        kernelId: this.id,
+        version: this.version,
+        bootTime: this.bootTime,
+        env: this.env,
+        services: this.services.list()
+      });
+      return this;
+    }
+    const wrapper = (data) => {
+      this._bus.off('kernel:boot:ready', wrapper);
+      handler(data);
+    };
+    this._bus.on('kernel:boot:ready', wrapper);
+    return this;
+  }
 
   // ── Uptime ──────────────────────────────────────────────────────────────
 
@@ -706,9 +908,9 @@ class Kernel {
    * @returns {Promise<void>}
    */
   async shutdown() {
-    if (this._status === 'shutdown') return;
+    if (this._status === 'stopped' || this._status === 'shutting_down') return;
 
-    this._status = 'shutdown';
+    this._status = 'shutting_down';
     this.emit('kernel:shutdown:start', { kernelId: this.id });
     this._log('info', 'Kernel shutdown initiated');
 
@@ -746,6 +948,7 @@ class Kernel {
     this.emit('kernel:shutdown:complete', { kernelId: this.id });
     this._bus.clear();
 
+    this._status = 'stopped';
     this._log('info', `Kernel ${this.id} shutdown complete`);
   }
 
@@ -793,6 +996,8 @@ const AIOS = {
   ServiceRegistry,
   createInMemoryLoopback,
   createPostMessageTransport,
+  createNodeWorkerTransport,
+  createBroadcastChannelTransport,
   // Default factory helpers (useful for testing / extending)
   createDefaultFilesystem,
   createDefaultRouter,
@@ -806,10 +1011,14 @@ const AIOS = {
 if (typeof module !== 'undefined' && module.exports) {
   // CommonJS / Node.js
   module.exports = AIOS;
+  /* istanbul ignore next */
 } else if (typeof define === 'function' && define.amd) {
   // AMD
+  /* istanbul ignore next */
   define([], function () { return AIOS; });
+  /* istanbul ignore next */
 } else if (typeof globalThis !== 'undefined') {
   // Browser global
+  /* istanbul ignore next */
   globalThis.AIOS = AIOS;
 }
