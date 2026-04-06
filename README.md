@@ -6,6 +6,8 @@ Universal Software Kernel for a modular, AI-native OS (AIOS).
 > It runs *inside* your OS layer and unifies all subsystems into one OS.  
 > Compatible with: **Browser · Node.js · Android (WebView/Expo) · Linux · macOS**
 
+![CI](https://github.com/Cbetts1/Kernal-/actions/workflows/ci.yml/badge.svg)
+
 ---
 
 ## Quick Start
@@ -37,11 +39,12 @@ await kernel.shutdown();
 | Feature | Details |
 |---|---|
 | **Event bus** | `on / off / emit` |
-| **Module loader** | `loadModule / unloadModule / getModule / listModules` + hot-swap |
-| **Kernel state** | `id`, `version`, `bootTime`, `uptime()`, `env`, `modules`, `services` |
+| **Module loader** | `loadModule / unloadModule / loadModuleAsync / getModule / listModules` + hot-swap |
+| **Kernel state** | `id`, `version`, `bootTime`, `uptime()`, `env`, `state`, `modules`, `services` |
 | **Boot controller** | Ordered subsystem init, lifecycle events |
 | **Shutdown sequence** | Graceful teardown, log flush, filesystem unmount |
 | **InterOS (IHL)** | JSON-based, transport-agnostic handshake between OS instances |
+| **Transports** | In-memory loopback, postMessage, Node worker_threads, BroadcastChannel |
 | **Integration API** | `createKernel({...})` |
 
 ---
@@ -98,6 +101,9 @@ console.log(kernel.getModule('analytics'));
 // Hot-swap (stops old, starts new automatically)
 kernel.loadModule('analytics', newAnalyticsModule);
 
+// Load asynchronously via dynamic import
+await kernel.loadModuleAsync('my-plugin', () => import('./my-plugin.js'));
+
 // Unload
 kernel.unloadModule('analytics');
 ```
@@ -121,6 +127,7 @@ const { sideA, sideB } = createInMemoryLoopback();
 
 kernelA.interOS.registerTransport('loopback', sideA);
 kernelB.interOS.registerTransport('loopback', sideB);
+kernelB.interOS._activeTransport = 'loopback'; // so B knows how to reply
 
 // kernelB listens for any message
 kernelB.interOS.on('hello', (msg) => {
@@ -134,8 +141,11 @@ const peer = await kernelA.interOS.handshake({
 });
 console.log('Handshake complete. Peer:', peer.peerId);
 
-// Send a typed message
+// Send a typed message to a single peer
 kernelA.interOS.send('hello', { text: 'Hi from kernelA!' });
+
+// Or broadcast to ALL registered transports at once
+kernelA.interOS.broadcast('hello', { text: 'Hi to everyone!' });
 ```
 
 ---
@@ -181,6 +191,40 @@ console.log('Connected to remote peer:', peer.peerId);
 
 ---
 
+## G. Built-in Transports
+
+### In-Memory Loopback
+Perfect for testing two kernels in the same process.
+```js
+const { sideA, sideB } = createInMemoryLoopback();
+kernelA.interOS.registerTransport('loopback', sideA);
+kernelB.interOS.registerTransport('loopback', sideB);
+```
+
+### postMessage (Browser / Web Worker)
+For `Window ↔ iframe`, `Window ↔ Worker`, or `Worker ↔ Worker` communication.
+```js
+const iframe = document.getElementById('my-iframe').contentWindow;
+kernel.interOS.registerTransport('iframe', createPostMessageTransport(iframe, 'https://peer.example.com'));
+```
+> ⚠️ **Always pass an explicit origin in production** to prevent cross-origin attacks.
+
+### Node.js worker_threads
+For communication between a main Node.js thread and a Worker thread.
+```js
+const { Worker } = require('worker_threads');
+const worker = new Worker('./my-worker.js');
+kernel.interOS.registerTransport('worker', createNodeWorkerTransport(worker));
+```
+
+### BroadcastChannel (Same-origin, Multi-tab)
+For same-origin browser tabs sharing a channel name.
+```js
+kernel.interOS.registerTransport('tabs', createBroadcastChannelTransport('aios-channel'));
+```
+
+---
+
 ## Integration API
 
 ```js
@@ -208,9 +252,27 @@ kernel.version   // semver string e.g. "1.0.0"
 kernel.bootTime  // ISO timestamp string
 kernel.uptime()  // milliseconds since boot
 kernel.env       // "browser" | "node" | "android" | "unknown"
+kernel.state     // "created" | "booting" | "running" | "shutting_down" | "stopped"
 kernel.modules   // ModuleRegistry
 kernel.services  // ServiceRegistry
 kernel.interOS   // InterOS (IHL)
+```
+
+---
+
+## Convenience Methods
+
+```js
+// Restart (shutdown then boot)
+await kernel.restart();
+
+// One-time ready handler — fires immediately if already booted
+kernel.onceReady((data) => {
+  console.log('Kernel is ready:', data.services);
+});
+
+// Unregister a service
+kernel.services.unregister('myService');
 ```
 
 ---
@@ -232,3 +294,15 @@ kernel.on('kernel:boot:ready', (data) => {
   console.log('Boot complete:', data);
 });
 ```
+
+---
+
+## Development
+
+```bash
+npm install          # install dev dependencies
+npm test             # run tests + coverage
+npm run lint         # run ESLint
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

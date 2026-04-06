@@ -1,0 +1,45 @@
+{
+  "name": "aios-kernel",
+  "version": "1.0.0",
+  "description": "Universal software kernel for modular, AI-native operating systems. Runs in Node.js, Browser, Android (WebView/Expo), Linux, and macOS.",
+  "main": "kernel.js",
+  "types": "kernel.d.ts",
+  "scripts": {
+    "test": "node --experimental-vm-modules node_modules/.bin/jest --coverage",
+    "lint": "eslint kernel.js",
+    "lint:fix": "eslint kernel.js --fix"
+  },
+  "keywords": [
+    "kernel",
+    "os",
+    "aios",
+    "ai",
+    "modular",
+    "cross-platform",
+    "browser",
+    "nodejs"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "eslint": "^8.57.1",
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "coverageThreshold": {
+      "global": {
+        "lines": 85,
+        "functions": 85,
+        "branches": 75,
+        "statements": 85
+      }
+    },
+    "collectCoverageFrom": [
+      "kernel.js"
+    ]
+  },
+  "engines": {
+    "node": ">=14.17.0"
+  }
+}
